@@ -1,5 +1,5 @@
 # app/routers/jobs.py
-from fastapi import APIRouter, UploadFile, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, Depends, HTTPException, File
 from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,8 +31,8 @@ async def list_jobs(db: AsyncSession = Depends(get_db)):
 
 @router.post("/jobs")
 async def create_job(
-    file: UploadFile,
-    sidecar: Optional[UploadFile] = None,     # NEW — optional .sigmf-meta upload
+    file: UploadFile = File(...),
+    sidecar: Optional[UploadFile] = File(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     filename = file.filename or ""
