@@ -70,8 +70,8 @@ def compute_spectrogram(sig: np.ndarray, sample_rate: float, nperseg: int = 256)
 
     # Downsample before storing — a full-resolution spectrogram matrix is far
     # too large for a JSONB column; 64x64 is plenty for a UI heatmap in Phase 3.
-    f_step = max(1, len(freqs) // 64)
-    t_step = max(1, len(times) // 64)
+    f_step = int(max(1, len(freqs) // 64))
+    t_step = int(max(1, len(times) // 64))
     return {
         "freq_bins": freqs[::f_step].tolist(),
         "time_bins": times[::t_step].tolist(),

@@ -31,7 +31,7 @@ def estimate_symbol_rate(sig: np.ndarray, sample_rate: float) -> dict:
     corr[0] = 0
 
     min_lag = 2
-    max_lag = min(len(corr) - 1, sample_rate // 100)
+    max_lag = int(min(len(corr) - 1, int(sample_rate) // 100))
     if max_lag <= min_lag:
         return _no_result("Signal too short to estimate symbol rate")
 
