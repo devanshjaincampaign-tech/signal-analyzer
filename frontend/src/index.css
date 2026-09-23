@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-rf-bg text-slate-100 font-sans min-h-screen;
+    background-image: 
+      radial-gradient(circle at 50% 0%, rgba(0, 240, 255, 0.04) 0%, transparent 60%),
+      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 100% 100%, 40px 40px, 40px 40px;
+  }
+}
+
+/* Custom scrollbar for data grids and bitstream views */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0d121f;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Glow and Panel Utilities */
+.rf-glass-panel {
+  background: rgba(16, 21, 34, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.rf-glass-panel-glow {
+  background: rgba(16, 21, 34, 0.85);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  box-shadow: 0 0 20px -5px rgba(0, 240, 255, 0.15);
+}
+
+.rf-card-active {
+  border-color: rgba(0, 240, 255, 0.4);
+  box-shadow: 0 0 15px -3px rgba(0, 240, 255, 0.2);
+}
+
+.glow-text-cyan {
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
+}
+
+.glow-text-green {
+  text-shadow: 0 0 8px rgba(0, 255, 136, 0.6);
+}
+
+.glow-text-amber {
+  text-shadow: 0 0 8px rgba(255, 170, 0, 0.6);
+}
+
+/* Radar Scanline effect */
+.radar-grid {
+  background-image: 
+    radial-gradient(circle at center, transparent 30%, rgba(0, 240, 255, 0.03) 31%, transparent 32%),
+    radial-gradient(circle at center, transparent 60%, rgba(0, 240, 255, 0.03) 61%, transparent 62%),
+    radial-gradient(circle at center, transparent 90%, rgba(0, 240, 255, 0.03) 91%, transparent 92%);
+}
