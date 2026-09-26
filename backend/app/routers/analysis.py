@@ -73,38 +73,46 @@ def _execute_full_pipeline(
     spectrogram = compute_spectrogram(sig, sr)
 
     freqs, psd = sp_signal.welch(
-        sig, fs=sr, nperseg=min(1024, len(sig)),
+        sig, fs=sr, nperseg=min(2048, len(sig)),
         return_onesided=not is_complex,
     )
     freqs, psd = _normalize_frequency_axis(freqs, psd, is_complex)
     psd_db = (10 * np.log10(psd + 1e-20)).tolist()
 
-    # 2. Symbol Rate
-    symbol_rate_res = estimate_symbol_rate(sig, sr)
+    # 2. Baseband Frequency Translation (DDC to 0 Hz DC)
+    fc = float(spectral.get("center_frequency_hz", 0.0))
+    if is_complex and abs(fc) > 1.0:
+        n_pts = len(sig)
+        n_arr = np.arange(n_pts, dtype=np.float64)
+        sig_bb = (sig * np.exp(-1j * 2.0 * np.pi * (fc / sr) * n_arr)).astype(np.complex64)
+    else:
+        sig_bb = sig
+
+    # 3. Symbol Rate
+    symbol_rate_res = estimate_symbol_rate(sig_bb, sr)
     if req and req.symbol_rate_override:
         sps = max(1, int(round(sr / req.symbol_rate_override)))
         symbol_rate_res["symbol_rate_hz"] = req.symbol_rate_override
         symbol_rate_res["samples_per_symbol"] = sps
         symbol_rate_res["confidence"] = 1.0
 
-    # 3. Modulation Classification
-    classification_feat = extract_classification_features(sig)
+    # 4. Modulation Classification
+    classification_feat = extract_classification_features(sig_bb)
     classification_res = classify_modulation(classification_feat)
     if req and req.modulation_override and req.modulation_override != "Auto":
         classification_res["modulation"] = req.modulation_override
         classification_res["confidence"] = 1.0
 
-    # 4. Demodulation
+    # 5. Demodulation
     mod_target = classification_res.get("modulation") or "PSK"
     sps_target = symbol_rate_res.get("samples_per_symbol") or 4
-    demod_res = demodulate(sig, sps_target, mod_target)
+    demod_res = demodulate(sig_bb, sps_target, mod_target)
 
-    # 5. De-interleaving
+    # 6. De-interleaving
     interleaving_res: dict = {"success": False, "reason": "No demodulated bits available"}
     bits_stream = demod_res.get("bits") if demod_res.get("success") else None
     
     if bits_stream and len(bits_stream) >= 16:
-        # Run brute-force multi-algorithm detector
         arr_bits = np.array(bits_stream, dtype=np.uint8)
         det_res = detect_and_deinterleave(arr_bits)
         if det_res.get("type"):
@@ -118,7 +126,7 @@ def _execute_full_pipeline(
         else:
             interleaving_res = search_deinterleave(bits_stream)
 
-    # 6. Forward Error Correction (FEC)
+    # 7. Forward Error Correction (FEC)
     fec_res: dict = {"success": False, "reason": "No bitstream available for FEC"}
     active_bits = (
         interleaving_res.get("bits")
@@ -183,7 +191,7 @@ def _execute_full_pipeline(
         except Exception as exc:
             fec_res = {"success": False, "reason": str(exc)}
 
-    # 7. Bit Stream Correlation & Sync Search
+    # 8. Bit Stream Correlation & Sync Search
     corr_res: dict = {"success": False, "reason": "No bits available for correlation"}
     final_bits = (
         fec_res.get("decoded_bits")
@@ -204,9 +212,15 @@ def _execute_full_pipeline(
             "total_hits": sum(len(v) for v in hits.values()),
         }
 
-    # Subsample I/Q for UI constellation plot
-    decim = max(1, len(sig) // 2048)
-    sub_sig = sig[::decim][:2048]
+    # 9. Subsample baseband I/Q at symbol centers for clean UI constellation plot
+    sps = int(symbol_rate_res.get("samples_per_symbol") or 4)
+    if is_complex and len(sig_bb) >= sps * 8:
+        sym_pts = sig_bb[sps // 2 :: sps]
+        decim = max(1, len(sym_pts) // 2048)
+        sub_sig = sym_pts[::decim][:2048]
+    else:
+        decim = max(1, len(sig) // 2048)
+        sub_sig = sig[::decim][:2048]
 
     return {
         "features": spectral,

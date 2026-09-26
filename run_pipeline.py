@@ -29,7 +29,7 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from app.routers.analysis import _execute_full_pipeline
-from app.ingestion.iq_reader import read_iq_samples
+from app.ingestion.iq_reader import read_iq_samples, parse_sample_rate
 from app.schemas import DirectAnalysisRequest
 import soundfile as sf
 
@@ -299,17 +299,18 @@ def _generate_html_dashboard(all_summaries: list[dict], output_dir: str) -> str:
 
 # ── File Analysis Pipeline ────────────────────────────────────────────────────
 
-def analyze_single_file(file_path: str, output_dir: str, sample_rate_override: float | None = None) -> dict:
+def analyze_single_file(file_path: str, output_dir: str, sample_rate_override: float | str | None = None) -> dict:
     """Run full pipeline on one file and generate all separate outputs."""
     base_name = os.path.basename(file_path)
     file_stem = os.path.splitext(base_name)[0]
     os.makedirs(output_dir, exist_ok=True)
 
+    sr_override_val = parse_sample_rate(sample_rate_override)
     print(f"\n[{base_name}] Loading and executing analysis...")
-    sig, sample_rate, is_complex = _load_signal_file(file_path, sample_rate_override=sample_rate_override)
+    sig, sample_rate, is_complex = _load_signal_file(file_path, sample_rate_override=sr_override_val)
 
     # 1. Run Complete Analysis Pipeline
-    req = DirectAnalysisRequest(sample_rate_override=sample_rate_override)
+    req = DirectAnalysisRequest(sample_rate_override=sr_override_val)
     results = _execute_full_pipeline(sig, sample_rate, req)
     results["filename"] = base_name
 
@@ -380,14 +381,22 @@ def analyze_single_file(file_path: str, output_dir: str, sample_rate_override: f
         f.write("======================================================================\n")
         f.write(f"SIGNAL ANALYSIS & PARAMETER EXTRACTION REPORT: {base_name}\n")
         f.write("======================================================================\n\n")
+        was_assumed = feat.get('sample_rate_was_assumed', False)
+        sr_tag = " (Assumed default - pass --sample-rate to override)" if was_assumed else ""
         f.write("1. INGESTION & SPECTRAL CHARACTERISTICS:\n")
-        f.write(f"   - Sampling Rate (Fs)       : {feat.get('sample_rate_used', 0):,.2f} Hz\n")
-        f.write(f"   - Center Frequency (fc)    : {feat.get('center_frequency_hz', 0):,.2f} Hz\n")
-        f.write(f"   - Occupied Bandwidth (3dB) : {feat.get('bandwidth_hz', 0):,.2f} Hz\n")
+        f.write(f"   - Sampling Rate (Fs)       : {feat.get('sample_rate_used', 0):,.2f} Hz{sr_tag}\n")
+        f.write(f"   - Center Frequency (fc)    : {feat.get('center_frequency_hz', 0):>+15,.2f} Hz (Baseband Offset from SDR LO)\n")
+        f.write(f"   - Occupied Bandwidth (3dB) : {feat.get('bandwidth_hz', 0):>15,.2f} Hz (Contiguous channel lobe)\n")
+        if feat.get('bandwidth_10db_hz'):
+            f.write(f"   - Occupied Bandwidth (10dB): {feat.get('bandwidth_10db_hz', 0):>15,.2f} Hz\n")
         f.write(f"   - Peak Spectral Power      : {feat.get('peak_power_db', 0):.2f} dBFS\n")
         f.write(f"   - Average Noise Floor      : {feat.get('noise_floor_db', 0):.2f} dBFS\n\n")
         f.write("2. MODULATION & SYMBOL TIMING:\n")
-        f.write(f"   - Detected Modulation      : {clf.get('modulation', 'Unknown')} (Confidence: {clf.get('confidence', 0):.1%})\n")
+        clf_top = ", ".join(f"{c['label']}({c['score']:.0%})" for c in clf.get("candidates", [])[:3])
+        f.write(f"   - Detected Modulation      : {clf.get('modulation', 'Unknown')} "
+                f"(Confidence: {clf.get('confidence', 0):.1%}, "
+                f"Method: {clf.get('method', 'rule_based')})\n")
+        f.write(f"   - Top Candidates           : {clf_top or 'N/A'}\n")
         f.write(f"   - Estimated Symbol Rate    : {sym.get('symbol_rate_hz', 0):,.2f} sym/s\n")
         f.write(f"   - Samples per Symbol (SPS) : {sym.get('samples_per_symbol', 'N/A')}\n\n")
         f.write("3. DEMODULATION & DE-INTERLEAVING:\n")
@@ -416,16 +425,30 @@ def analyze_single_file(file_path: str, output_dir: str, sample_rate_override: f
     print("+" + "-" * 70 + "+")
     print(f"| RESULTS FOR: {base_name:<55} |")
     print("+" + "-" * 70 + "+")
-    print(f"| Sampling Rate (Fs): {feat.get('sample_rate_used', 0):>15,.1f} Hz")
-    print(f"| Carrier Freq (fc) : {feat.get('center_frequency_hz', 0):>15,.1f} Hz")
-    print(f"| Occupied Bandwidth: {feat.get('bandwidth_hz', 0):>15,.1f} Hz")
-    print(f"| Modulation        : {clf.get('modulation', 'Unknown')} (confidence: {clf.get('confidence', 0):.0%})")
+    was_assumed = feat.get('sample_rate_was_assumed', False)
+    sr_str = f"{feat.get('sample_rate_used', 0):>15,.1f} Hz"
+    if was_assumed:
+        sr_str += " [DEFAULT ASSUMED]"
+    print(f"| Sampling Rate (Fs): {sr_str}")
+    print(f"| Carrier Freq (fc) : {feat.get('center_frequency_hz', 0):>+15,.1f} Hz (Baseband Offset)")
+    print(f"| Occupied Bandwidth: {feat.get('bandwidth_hz', 0):>15,.1f} Hz (3dB channel)")
+    clf_method = clf.get("method", "rule_based")
+    clf_candidates = ", ".join(
+        f"{c['label']}({c['score']:.0%})" for c in clf.get("candidates", [])[:3]
+    )
+    print(f"| Modulation        : {clf.get('modulation', 'Unknown')} ({clf.get('confidence', 0):.0%} via {clf_method})")
+    print(f"|   Top candidates  : {clf_candidates or 'N/A'}")
     print(f"| Symbol Rate       : {sym.get('symbol_rate_hz', 0):>15,.1f} sym/s (SPS: {sym.get('samples_per_symbol', 'N/A')})")
     print(f"| Demodulation      : {dem.get('type', 'N/A')} ({dem.get('num_bits', 0)} raw bits)")
     print(f"| De-interleaving   : {intlv.get('pattern', 'None')} {intlv.get('best_params', '')}")
     print(f"| FEC Decoding      : {fec.get('method', 'None')} ({fec.get('decoded_count', 0)} bits decoded)")
     print(f"| Header Sync Match : {header_info}")
     print("+" + "-" * 70 + "+")
+    if was_assumed:
+        print("| [!] NOTICE: Sampling rate was not detected in metadata or filename.")
+        print("|     Defaulted to 1.0 MHz. If capture was 4MHz or 6MHz, run with:")
+        print("|     python run_pipeline.py --sample-rate 4M (or --sample-rate 6M)")
+        print("+" + "-" * 70 + "+")
     print(f"Outputs written to: {os.path.abspath(output_dir)}/")
     print(f"  |-- {file_stem}_psd_spectrum.png")
     print(f"  |-- {file_stem}_spectrogram_waterfall.png")
@@ -443,7 +466,7 @@ def main() -> None:
     parser.add_argument("--input", "-i", help="Path to a single .iq or .wav signal file")
     parser.add_argument("--input-dir", default="input", help="Directory containing input .iq / .wav files (default: 'input')")
     parser.add_argument("--output-dir", "-o", default="output", help="Directory to store analysis outputs (default: 'output')")
-    parser.add_argument("--sample-rate", "-fs", type=float, help="Explicit sampling rate in Hz (e.g. 2000000 for 2 MSPS)")
+    parser.add_argument("--sample-rate", "-fs", type=str, help="Explicit sampling rate (e.g. 4M, 4MHz, 4MSPS, 6M, 250k, 2000000)")
     args = parser.parse_args()
 
     input_dir = os.path.abspath(args.input_dir)

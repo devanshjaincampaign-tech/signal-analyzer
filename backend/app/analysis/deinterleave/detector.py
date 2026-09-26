@@ -21,8 +21,9 @@ SUPPORTED_TYPES = ("block", "convolutional", "diagonal", "pseudo_random")
 def _validity_score(bits: np.ndarray) -> float:
     """Higher score = more likely to be a structured de-interleaved bit stream.
 
-    Uses run-length statistics: natural de-interleaved streams display longer
-    runs of identical bits compared to pseudo-random scrambled bit streams.
+    Uses run-length and transition entropy statistics: natural de-interleaved
+    and structured payload streams display non-random run lengths compared to
+    scrambled / interleaved streams.
     """
     if len(bits) == 0:
         return 0.0
@@ -31,7 +32,10 @@ def _validity_score(bits: np.ndarray) -> float:
     if len(change_indices) == 0:
         return float(len(bits))
     runs = np.diff(np.concatenate(([-1], change_indices, [len(bits) - 1])))
-    return float(np.mean(runs))
+    # Score combines mean run length and variance (structured data has distinct run distributions)
+    mean_run = float(np.mean(runs))
+    var_run = float(np.var(runs))
+    return mean_run + 0.1 * var_run
 
 
 def _apply_deinterleaver(kind: str, bits: np.ndarray, depth: int, width: int) -> np.ndarray:
@@ -60,7 +64,7 @@ def detect_and_deinterleave(
     """Fast search for best de-interleaving scheme, followed by full-stream transformation.
 
     Args:
-        bits:            Input (interleaved) bit array.
+        bits:            Input bit array.
         depth_range:     Depths / branch counts to test.
         sync_word:       Optional known sync pattern for correlation scoring.
         max_search_bits: Maximum bits to use during parameter search.
@@ -73,9 +77,15 @@ def detect_and_deinterleave(
     if n_total < 8:
         return {"score": 0.0, "type": None, "depth": None, "width": None, "bits": bits}
 
-    # Use fast search chunk to evaluate configurations
+    # Baseline score of raw, un-deinterleaved bits
     search_bits = bits[:min(n_total, max_search_bits)]
-    best: dict = {"score": -1.0, "type": None, "depth": None, "width": None}
+    if sync_word is not None:
+        corr_raw = np.correlate(search_bits.astype(np.float32), sync_word.astype(np.float32), mode="valid")
+        raw_score = float(np.max(corr_raw)) if len(corr_raw) > 0 else 0.0
+    else:
+        raw_score = _validity_score(search_bits)
+
+    best: dict = {"score": raw_score, "type": None, "depth": None, "width": None}
 
     for depth in depth_range:
         search_width = len(search_bits) // depth
@@ -116,13 +126,16 @@ def detect_and_deinterleave(
             if sync_word is not None:
                 corr = np.correlate(res.astype(np.float32), sync_word.astype(np.float32), mode="valid")
                 score = float(np.max(corr)) if len(corr) > 0 else 0.0
+                # Must strictly beat raw correlation score
+                if score > best["score"]:
+                    best = {"score": score, "type": kind, "depth": depth, "width": search_width}
             else:
                 score = _validity_score(res)
+                # Must be at least 25% better than raw score to avoid false positive interleaving
+                if score > best["score"] * 1.25:
+                    best = {"score": score, "type": kind, "depth": depth, "width": search_width}
 
-            if score > best["score"]:
-                best = {"score": score, "type": kind, "depth": depth, "width": search_width}
-
-    # Apply winning configuration to the full bitstream
+    # Apply winning configuration to full bitstream if a real deinterleaver was found
     if best["type"] is not None and best["depth"] is not None:
         full_width = n_total // best["depth"]
         if full_width >= 1:

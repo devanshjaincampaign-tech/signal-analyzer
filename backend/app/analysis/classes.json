@@ -1,0 +1,18 @@
+[
+  "OOK",
+  "PAM",
+  "2FSK",
+  "MFSK",
+  "GFSK",
+  "BPSK",
+  "QPSK",
+  "8PSK",
+  "16PSK",
+  "16QAM",
+  "32QAM",
+  "64QAM",
+  "128QAM",
+  "256QAM",
+  "1024QAM",
+  "APSK"
+]
